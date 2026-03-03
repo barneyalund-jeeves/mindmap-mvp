@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindMap MVP</title>
+  <style>
+    :root {
+      --bg:#0f1115; --panel:#171a21; --card:#202530; --line:#8fa3c8;
+      --text:#e7edf7; --muted:#9fb0cc; --accent:#62a9ff; --danger:#ff7c7c;
+      --grid-dot:#222937; --grid-bg:#10141c;
+    }
+    html[data-theme="light"] {
+      --bg:#f4f7fc; --panel:#ffffff; --card:#ffffff; --line:#65779d;
+      --text:#1f2a3d; --muted:#6f7f99; --accent:#2f7dff; --danger:#d54d4d;
+      --grid-dot:#d7deea; --grid-bg:#edf2fa;
+    }
+    html[data-theme="glass"] {
+      --bg:#0b1220; --panel:#ffffff1a; --card:#ffffff1f; --line:#9ec5ff;
+      --text:#eaf2ff; --muted:#bed0ee; --accent:#7bb0ff; --danger:#ff8b8b;
+      --grid-dot:#7aa0d822; --grid-bg:#0b1220;
+    }
+    html[data-theme="pastel-light"] {
+      --bg:#fffafc; --panel:#fff3f8cc; --card:#ffffffcc; --line:#9ba9d8;
+      --text:#3a3552; --muted:#7d7799; --accent:#8f98ff; --danger:#e57f95;
+      --grid-dot:#e8dff3; --grid-bg:#fff7fb;
+    }
+    html[data-theme="pastel-dark"] {
+      --bg:#1c1b28; --panel:#2c2940cc; --card:#383451cc; --line:#b3a6db;
+      --text:#f0ebff; --muted:#bcb2dc; --accent:#c4b2ff; --danger:#ff9ab3;
+      --grid-dot:#6f649c44; --grid-bg:#201d31;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; font-family: Inter, system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    .app { height:100%; display:grid; grid-template-rows:auto 1fr; }
+    .toolbar { position:relative; z-index:60; display:flex; gap:8px; align-items:center; padding:10px 12px; background:color-mix(in srgb, var(--panel) 85%, transparent); border-bottom:1px solid #ffffff26; flex-wrap:wrap; backdrop-filter: blur(18px) saturate(140%); box-shadow:0 4px 18px #0000001f; }
+    button { border:none; background:transparent; color:var(--text); border-radius:0; padding:4px 8px; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.01em; }
+    .danger { border-color:#9c4242; }
+    .hint,.zoom { font-size:13px; color:var(--muted); }
+    .file-menu { position:relative; }
+    .file-menu summary { list-style:none; cursor:pointer; border:none; background:transparent; padding:4px 8px; font-size:13px; font-weight:600; }
+    .file-menu[open] .file-pop { display:flex; }
+    .file-pop { display:none; flex-direction:column; gap:6px; position:absolute; top:38px; left:0; z-index:40; padding:8px; min-width:160px; border-radius:12px; background:color-mix(in srgb, var(--panel) 88%, transparent); border:1px solid #ffffff33; backdrop-filter: blur(14px); }
+
+    .canvas-wrap {
+      position:relative; z-index:1; overflow:hidden;
+      background: radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0/24px 24px, var(--grid-bg);
+    }
+    svg, #nodesLayer { position:absolute; inset:0; width:100%; height:100%; }
+    svg { pointer-events:none; }
+    #nodesLayer { pointer-events:auto; }
+
+    .node {
+      position:absolute; width:180px; min-height:56px; padding:10px 12px; border-radius:10px;
+      background:var(--card); border:1px solid #3c475e61; box-shadow:0 6px 18px #00000024;
+      color:var(--text); user-select:none;
+      display:flex; align-items:center; justify-content:center;
+      transition: box-shadow .2s, border-color .2s;
+    }
+    html[data-theme="glass"] .node { backdrop-filter: blur(14px) saturate(130%); border-color:#ffffff40; box-shadow:0 8px 24px #00000033; }
+    .node.main { border-width:3px; box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent), 0 8px 22px #0000002e; }
+    .node.selected { border-color:var(--accent); }
+
+    .title {
+      width:100%; min-height:20px; white-space:pre-wrap; word-break:break-word;
+      font-size:14px; line-height:1.35; outline:none; cursor:text; user-select:text;
+      border-radius:6px; padding:2px 4px;
+      text-align:center; pointer-events:none;
+    }
+    .title:empty::before { content:""; display:inline-block; width:1px; }
+    .title.editing { background:#ffffff14; }
+
+    .drop-overlay {
+      position:absolute; pointer-events:none; display:none; border-radius:10px;
+      border:2px dashed #60a5fa; background:#60a5fa22; color:#dbeafe;
+      font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+      align-items:center; justify-content:center;
+    }
+    .drop-overlay.show { display:flex; }
+    .drop-overlay.sibling-top { border-color:#34d399; background:linear-gradient(to bottom,#34d39955 50%,transparent 50%); }
+    .drop-overlay.sibling-bottom { border-color:#34d399; background:linear-gradient(to top,#34d39955 50%,transparent 50%); }
+
+    .ghost-bubble {
+      position:absolute; width:180px; height:56px; border-radius:10px;
+      border:2px dashed #8ec5ff; background:#8ec5ff24;
+      display:none; pointer-events:none; z-index:22;
+    }
+    .ghost-bubble.show { display:block; }
+
+    .collapse-caret {
+      position:absolute; top:50%; transform:translateY(-50%);
+      width:14px; height:14px; border-radius:50%;
+      background:#ffffff40; color:#fff; font-size:10px; line-height:14px; text-align:center;
+      opacity:0; transition:opacity .15s, transform .15s; cursor:pointer;
+      pointer-events:auto;
+    }
+    .node:hover .collapse-caret { opacity:.7; }
+    .collapse-caret.persistent { opacity:.78; }
+    .collapse-caret:hover { opacity:1; }
+    .collapse-caret.left { left:-18px; }
+    .collapse-caret.right { right:-18px; }
+    .collapse-caret.collapsed { transform:translateY(-50%) rotate(180deg); }
+
+    .help {
+      position:absolute; right:10px; bottom:10px; display:none; white-space:pre-line;
+      background:var(--panel); color:var(--muted); border:1px solid #00000020; border-radius:8px;
+      padding:8px 10px; font-size:12px; line-height:1.5;
+    }
+    .help.show { display:block; }
+
+    .modal-backdrop {
+      position:absolute; inset:0; background:#00000066; backdrop-filter: blur(6px);
+      display:none; align-items:center; justify-content:center; z-index:30;
+    }
+    .modal-backdrop.show { display:flex; }
+    .modal {
+      width:min(420px,92vw); background:color-mix(in srgb, var(--panel) 88%, transparent);
+      border:1px solid #ffffff33; border-radius:14px; padding:14px;
+      box-shadow:0 16px 40px #0000004d; backdrop-filter: blur(18px) saturate(130%);
+    }
+    .modal h3 { margin:0 0 6px; font-size:16px; }
+    .modal p { margin:0 0 12px; color:var(--muted); font-size:13px; }
+    .modal-actions { display:flex; gap:8px; justify-content:flex-end; }
+
+    @keyframes shatter {
+      0% { transform: scale(1) rotate(0deg); opacity:1; filter: blur(0); }
+      40% { transform: scale(1.04) rotate(-1deg); opacity:.9; }
+      100% { transform: scale(.72) rotate(6deg); opacity:0; filter: blur(3px); }
+    }
+    .node.shatter { animation: shatter .22s ease-out forwards; }
+
+    @media print {
+      .toolbar, .help, .drop-overlay, .modal-backdrop, .ghost-bubble { display:none !important; }
+      .app { grid-template-rows: 1fr; }
+      .canvas-wrap { overflow: visible; background: #fff !important; }
+      .node { box-shadow:none !important; }
+      html, body { background:#fff !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <details class="file-menu" id="fileMenu">
+        <summary>File</summary>
+        <div class="file-pop">
+          <button id="newBtn">New</button>
+          <button id="exportBtn">Download</button>
+          <button id="importBtn">Upload</button>
+          <button id="printBtn">Print / PDF</button>
+        </div>
+      </details>
+      <button id="themeBtn">Theme</button>
+      <button id="expandAllBtn">Expand All</button>
+      <button id="collapseAllBtn">Collapse All</button>
+      <span class="zoom" id="zoomText">Zoom: 100%</span>
+      <span class="hint">Tab -> Child · Enter -> Sibling · Drag/drop to reorder</span>
+      <input type="file" id="importFile" accept="application/json" style="display:none" />
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <svg id="edgesLayer"></svg>
+      <div id="nodesLayer"></div>
+      <div id="dropOverlay" class="drop-overlay"></div>
+      <div id="ghostBubble" class="ghost-bubble"></div>
+      <div id="help" class="help"></div>
+
+      <div id="newMapModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="newMapTitle">
+        <div class="modal">
+          <h3 id="newMapTitle">Create new map?</h3>
+          <p>Download current map first or start fresh now.</p>
+          <div class="modal-actions">
+            <button id="newCancelBtn">Cancel</button>
+            <button id="newSaveBtn">Download</button>
+            <button id="newNowBtn">New</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const STORAGE_KEY = 'mindmap-mvp-v6';
+const NODE_W = 180, NODE_H = 56, X_STEP = 250, Y_STEP = 100;
+
+const state = { nodes: [], edges: [], selectedNodeId: null, editingNodeId: null, editBackupText: '', zoom: 1, panX: 0, panY: 0, drag: null, dropHint: null, theme: 'dark' };
+const el = {
+  canvasWrap: document.getElementById('canvasWrap'), nodesLayer: document.getElementById('nodesLayer'), edgesLayer: document.getElementById('edgesLayer'),
+  dropOverlay: document.getElementById('dropOverlay'), newBtn: document.getElementById('newBtn'), themeBtn: document.getElementById('themeBtn'),
+  expandAllBtn: document.getElementById('expandAllBtn'), collapseAllBtn: document.getElementById('collapseAllBtn'), printBtn: document.getElementById('printBtn'), exportBtn: document.getElementById('exportBtn'), importBtn: document.getElementById('importBtn'), importFile: document.getElementById('importFile'),
+  zoomText: document.getElementById('zoomText'), help: document.getElementById('help'), ghostBubble: document.getElementById('ghostBubble'), fileMenu: document.getElementById('fileMenu'),
+  newMapModal: document.getElementById('newMapModal'), newCancelBtn: document.getElementById('newCancelBtn'), newSaveBtn: document.getElementById('newSaveBtn'), newNowBtn: document.getElementById('newNowBtn')
+};
+el.help.textContent = `Tab: child • Enter: sibling\nDrag any bubble to reparent\nDouble-click to edit`;
+
+const id = () => Math.random().toString(36).slice(2,10);
+const byId = nid => state.nodes.find(n => n.id === nid) || null;
+const mainNode = () => state.nodes.find(n => n.parentId == null) || null;
+const mapCenterX = () => (mainNode()?.x ?? 0) + NODE_W / 2;
+const worldToScreen = (x,y) => ({ x: x * state.zoom + state.panX, y: y * state.zoom + state.panY });
+const screenToWorld = (x,y) => ({ x: (x - state.panX) / state.zoom, y: (y - state.panY) / state.zoom });
+
+function saveLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify({nodes:state.nodes, theme:state.theme})); }
+function loadLocal(){ try { const p = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); state.nodes = Array.isArray(p.nodes) ? p.nodes.map(n=>({...n, collapsed:!!n.collapsed, collapsedLeft:!!n.collapsedLeft, collapsedRight:!!n.collapsedRight})) : []; if (['dark','light','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; } catch {} }
+function setTheme(t){ state.theme = ['dark','light','glass','pastel-light','pastel-dark'].includes(t) ? t : 'dark'; document.documentElement.setAttribute('data-theme', state.theme); saveLocal(); }
+function cycleTheme(){ const order=['dark','light','glass','pastel-light','pastel-dark']; const i=order.indexOf(state.theme); setTheme(order[(i+1)%order.length]); }
+function centerMainNode(){ const m = mainNode(); if(m){ m.x = -NODE_W/2; m.y = -NODE_H/2; } }
+function resetView(){ state.zoom = 1; state.panX = el.canvasWrap.clientWidth / 2; state.panY = el.canvasWrap.clientHeight / 2; }
+function animateView(targetPanX,targetPanY,targetZoom,duration=220){
+  const sx=state.panX, sy=state.panY, sz=state.zoom, st=performance.now();
+  function tick(now){
+    const t=Math.min(1,(now-st)/duration); const e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    state.panX=sx+(targetPanX-sx)*e; state.panY=sy+(targetPanY-sy)*e; state.zoom=sz+(targetZoom-sz)*e; render();
+    if(t<1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+function focusNodeForEditing(node){
+  if(!node) return;
+  const vw=el.canvasWrap.clientWidth, vh=el.canvasWrap.clientHeight;
+  const targetZoom=Math.max(state.zoom, 0.95); // keep text legible
+  const cx=node.x+NODE_W/2, cy=node.y+NODE_H/2;
+  state.zoom=targetZoom;
+  state.panX = vw/2 - cx*state.zoom;
+  state.panY = vh/2 - cy*state.zoom;
+}
+function resolveOverlaps(iterations=40){
+  const pad=18;
+  for(let k=0;k<iterations;k++){
+    let moved=false;
+    for(let i=0;i<state.nodes.length;i++){
+      for(let j=i+1;j<state.nodes.length;j++){
+        const a=state.nodes[i], b=state.nodes[j];
+        const ax1=a.x, ay1=a.y, ax2=a.x+NODE_W, ay2=a.y+NODE_H;
+        const bx1=b.x, by1=b.y, bx2=b.x+NODE_W, by2=b.y+NODE_H;
+        const ox=Math.min(ax2,bx2)-Math.max(ax1,bx1);
+        const oy=Math.min(ay2,by2)-Math.max(ay1,by1);
+        if(ox> -pad && oy> -pad){
+          const pushX=(ox+pad)/2;
+          const pushY=(oy+pad)/2;
+          const dx=(a.x+NODE_W/2) < (b.x+NODE_W/2) ? -pushX : pushX;
+          const dy=(a.y+NODE_H/2) < (b.y+NODE_H/2) ? -pushY : pushY;
+          if(a.parentId!=null){ a.x += dx*0.5; a.y += dy*0.5; }
+          if(b.parentId!=null){ b.x -= dx*0.5; b.y -= dy*0.5; }
+          moved=true;
+        }
+      }
+    }
+    if(!moved) break;
+  }
+}
+function ensureNodeVisibleNow(node){
+  if(!node) return;
+  const vw=el.canvasWrap.clientWidth, vh=el.canvasWrap.clientHeight, m=28;
+  let left=node.x*state.zoom+state.panX, top=node.y*state.zoom+state.panY;
+  let right=(node.x+NODE_W)*state.zoom+state.panX, bottom=(node.y+NODE_H)*state.zoom+state.panY;
+
+  // If node is too big for viewport margins, zoom out first.
+  const availW=Math.max(40,vw-2*m), availH=Math.max(40,vh-2*m);
+  const needZoom=Math.min(availW/NODE_W, availH/NODE_H, 1);
+  if(state.zoom>needZoom){
+    const centerX=node.x+NODE_W/2, centerY=node.y+NODE_H/2;
+    state.zoom=Math.max(0.35,needZoom);
+    state.panX=vw/2-centerX*state.zoom;
+    state.panY=vh/2-centerY*state.zoom;
+    left=node.x*state.zoom+state.panX; top=node.y*state.zoom+state.panY;
+    right=(node.x+NODE_W)*state.zoom+state.panX; bottom=(node.y+NODE_H)*state.zoom+state.panY;
+  }
+
+  if(left<m) state.panX += (m-left);
+  if(right>vw-m) state.panX -= (right-(vw-m));
+  if(top<m) state.panY += (m-top);
+  if(bottom>vh-m) state.panY -= (bottom-(vh-m));
+}
+
+const childrenOf = (pid, side=null) => state.nodes.filter(n => n.parentId===pid && (side==null || n.side===side));
+function firstLevelSideForNext(){ const m = mainNode(); if(!m) return 1; return childrenOf(m.id,1).length <= childrenOf(m.id,-1).length ? 1 : -1; }
+function hasChildren(nodeId, side=null){ return state.nodes.some(n=>n.parentId===nodeId && (side==null || n.side===side)); }
+function isFirstLevel(node){ const m=mainNode(); return !!m && node.parentId===m.id; }
+function visibleNodeSet(){
+  const m=mainNode(); if(!m) return new Set();
+  const vis=new Set();
+  function walk(id){
+    vis.add(id);
+    const n=byId(id); if(!n) return;
+    if(n.parentId==null){
+      const kids=state.nodes.filter(x=>x.parentId===id);
+      for(const c of kids){
+        if(c.side<0 && n.collapsedLeft) continue;
+        if(c.side>0 && n.collapsedRight) continue;
+        walk(c.id);
+      }
+      return;
+    }
+    if(n.collapsed) return;
+    for(const c of state.nodes.filter(x=>x.parentId===id)) walk(c.id);
+  }
+  walk(m.id);
+  return vis;
+}
+function syncEdgesFromParents(){ state.edges = state.nodes.filter(n => n.parentId).map(n => ({id:id(), from:n.parentId, to:n.id})); }
+function rebalanceChildren(pid, side){ const p = byId(pid); if(!p) return; const sibs = childrenOf(pid,side).sort((a,b)=>a.y-b.y); const start = p.y - ((sibs.length - 1) * Y_STEP) / 2; sibs.forEach((n,i)=>{ n.x = p.x + side * X_STEP; n.y = start + i * Y_STEP; }); }
+function isDescendant(candidate, ancestor){ let cur = byId(candidate); while(cur && cur.parentId){ if(cur.parentId === ancestor) return true; cur = byId(cur.parentId);} return false; }
+function subtreeIds(rootId){
+  const out=new Set([rootId]);
+  let changed=true;
+  while(changed){
+    changed=false;
+    for(const n of state.nodes){
+      if(n.parentId && out.has(n.parentId) && !out.has(n.id)){ out.add(n.id); changed=true; }
+    }
+  }
+  return out;
+}
+function translateSubtree(rootId, dx, dy, includeRoot=true){
+  const ids=subtreeIds(rootId);
+  for(const n of state.nodes){ if(ids.has(n.id) && (includeRoot || n.id!==rootId)){ n.x += dx; n.y += dy; } }
+}
+function normalizeSubtreeLayout(rootId){
+  const root = byId(rootId); if(!root) return;
+  const kids = state.nodes.filter(n=>n.parentId===rootId).sort((a,b)=>a.y-b.y);
+  const start = root.y - ((kids.length-1)*Y_STEP)/2;
+  kids.forEach((c,i)=>{
+    c.side = root.side;
+    c.x = root.x + root.side*X_STEP;
+    c.y = start + i*Y_STEP;
+    normalizeSubtreeLayout(c.id);
+  });
+}
+
+function addNode(parentId=null){
+  if (!state.nodes.length || !parentId){ const n={id:id(),x:-NODE_W/2,y:-NODE_H/2,text:'',parentId:null,side:0,collapsed:false,collapsedLeft:false,collapsedRight:false}; state.nodes.push(n); state.selectedNodeId=n.id; syncEdgesFromParents(); ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id); return n; }
+  const p = byId(parentId); if(!p) return null;
+  const side = p.parentId == null ? firstLevelSideForNext() : p.side;
+  const sibs = childrenOf(p.id, side); const rank = sibs.length % 2 === 0 ? sibs.length/2 : -((sibs.length+1)/2);
+  const n = {id:id(), x:p.x + side*X_STEP, y:p.y + rank*Y_STEP, text:'', parentId:p.id, side, collapsed:false};
+  state.nodes.push(n); rebalanceChildren(p.id, side); resolveOverlaps(); syncEdgesFromParents(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id); return n;
+}
+function addSibling(){
+  const cur=byId(state.selectedNodeId); if(!cur || !cur.parentId) return;
+  const parent=byId(cur.parentId); if(!parent) return;
+  const n={id:id(), x:cur.x, y:cur.y+Y_STEP, text:'', parentId:parent.id, side:cur.side, collapsed:false};
+  const sibs=childrenOf(parent.id, cur.side).sort((a,b)=>a.y-b.y);
+  const idx=Math.max(0,sibs.findIndex(s=>s.id===cur.id));
+  sibs.splice(idx+1,0,n);
+  const start=parent.y-((sibs.length-1)*Y_STEP)/2;
+  sibs.forEach((s,i)=>{ s.x=parent.x+cur.side*X_STEP; s.y=start+i*Y_STEP; });
+  state.nodes.push(n); resolveOverlaps(); syncEdgesFromParents(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id);
+}
+
+function reparentAsChild(d,t){
+  if(!d||!t||d.id===t.id||isDescendant(t.id,d.id)) return;
+  if(d.parentId==null) return;
+  const op=d.parentId, os=d.side, oldX=d.x, oldY=d.y;
+
+  d.parentId=t.id;
+  d.side=t.parentId==null ? ((d.x+NODE_W/2)>=mapCenterX()?1:-1) : t.side;
+  rebalanceChildren(t.id,d.side);
+
+  const dx=d.x-oldX, dy=d.y-oldY;
+  translateSubtree(d.id, dx, dy, false); // move descendants with A
+  normalizeSubtreeLayout(d.id); // make subtree feel native to new branch direction
+
+  if(op) rebalanceChildren(op,os);
+  syncEdgesFromParents();
+}
+function reparentAsSibling(d,t,below){
+  if(!d||!t||!t.parentId||d.id===t.id) return;
+  if(d.parentId==null) return;
+  const p=byId(t.parentId); if(!p||isDescendant(p.id,d.id)) return;
+  const op=d.parentId, os=d.side, oldX=d.x, oldY=d.y;
+
+  d.parentId=p.id; d.side=t.side;
+  const sibs=childrenOf(p.id,t.side).filter(n=>n.id!==d.id).sort((a,b)=>a.y-b.y);
+  const ti=Math.max(0,sibs.findIndex(n=>n.id===t.id));
+  sibs.splice(below?ti+1:ti,0,d);
+  const start=p.y-((sibs.length-1)*Y_STEP)/2;
+  sibs.forEach((n,i)=>{n.x=p.x+t.side*X_STEP;n.y=start+i*Y_STEP;});
+
+  const dx=d.x-oldX, dy=d.y-oldY;
+  translateSubtree(d.id, dx, dy, false); // move descendants with A
+  normalizeSubtreeLayout(d.id); // adopt new branch orientation
+
+  if(op&&op!==p.id) rebalanceChildren(op,os);
+  syncEdgesFromParents();
+}
+
+function drawEdge(a,b){ const A=worldToScreen(a.x+NODE_W/2,a.y+NODE_H/2), B=worldToScreen(b.x+NODE_W/2,b.y+NODE_H/2); const dx=B.x-A.x, c=Math.max(40,Math.abs(dx)*0.45); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d',`M ${A.x} ${A.y} C ${A.x+(dx>=0?c:-c)} ${A.y}, ${B.x-(dx>=0?c:-c)} ${B.y}, ${B.x} ${B.y}`); p.setAttribute('fill','none'); p.setAttribute('stroke','var(--line)'); p.setAttribute('stroke-width',String(Math.max(1.5,2*state.zoom*0.9))); p.setAttribute('opacity','0.95'); el.edgesLayer.appendChild(p); }
+
+function startEditingNode(nodeId, prefill='', replaceAll=false){
+  const title = el.nodesLayer.querySelector(`.node[data-node-id="${nodeId}"] .title`);
+  const node = byId(nodeId);
+  if(!title||!node) return;
+  state.editingNodeId = nodeId;
+  state.editBackupText = node.text || '';
+  title.style.pointerEvents='auto';
+  title.contentEditable='true'; title.classList.add('editing'); title.focus();
+  if(replaceAll){ title.textContent=''; node.text=''; }
+  if(prefill){
+    title.textContent = prefill; node.text = prefill;
+    const r=document.createRange(); r.selectNodeContents(title); r.collapse(false);
+    const s=window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  } else {
+    const r=document.createRange(); r.selectNodeContents(title);
+    const s=window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+}
+function stopEditing(title,node,commit=true){
+  title.contentEditable='false'; title.classList.remove('editing'); title.style.pointerEvents='none';
+  node.text = commit ? (title.textContent || '') : (state.editBackupText || '');
+  state.editingNodeId=null; state.editBackupText='';
+  saveLocal();
+}
+
+function renderDropOverlay(){
+  const h=state.dropHint;
+  if(!h){ el.dropOverlay.className='drop-overlay'; el.dropOverlay.style.display='none'; return; }
+  const t=byId(h.targetId); if(!t) return;
+  const p=worldToScreen(t.x,t.y);
+  el.dropOverlay.className=`drop-overlay show ${h.mode}`;
+  el.dropOverlay.style.left=p.x+'px'; el.dropOverlay.style.top=p.y+'px';
+  el.dropOverlay.style.width=(NODE_W*state.zoom)+'px'; el.dropOverlay.style.height=(NODE_H*state.zoom)+'px';
+
+  // Visual zones for inner/outer + top/bottom drop behavior.
+  const right = h.targetOnRight;
+  const innerStart = right ? 0 : 50;
+  const innerEnd = right ? 50 : 100;
+  el.dropOverlay.style.background = `linear-gradient(to right,
+    rgba(52,211,153,0.28) ${innerStart}%,
+    rgba(52,211,153,0.28) ${innerEnd}%,
+    rgba(96,165,250,0.22) ${innerEnd}%,
+    rgba(96,165,250,0.22) 100%)`;
+
+  if(h.mode==='sibling-top') el.dropOverlay.style.background = `linear-gradient(to right, rgba(52,211,153,0.26) ${innerStart}%, rgba(52,211,153,0.26) ${innerEnd}%, rgba(96,165,250,0.2) ${innerEnd}%, rgba(96,165,250,0.2) 100%), linear-gradient(to bottom, rgba(52,211,153,0.45) 25%, transparent 25%)`;
+  if(h.mode==='sibling-bottom') el.dropOverlay.style.background = `linear-gradient(to right, rgba(52,211,153,0.26) ${innerStart}%, rgba(52,211,153,0.26) ${innerEnd}%, rgba(96,165,250,0.2) ${innerEnd}%, rgba(96,165,250,0.2) 100%), linear-gradient(to top, rgba(52,211,153,0.45) 25%, transparent 25%)`;
+
+  el.dropOverlay.textContent = h.mode==='child' ? 'Drop as Child' : (h.mode==='sibling-top' ? 'Sibling Above' : 'Sibling Below');
+}
+
+function renderGhostBubble(){
+  const h=state.dropHint;
+  if(!h){ el.ghostBubble.className='ghost-bubble'; return; }
+  const pos = h.ghostPos;
+  if(!pos){ el.ghostBubble.className='ghost-bubble'; return; }
+  const p=worldToScreen(pos.x,pos.y);
+  el.ghostBubble.className='ghost-bubble show';
+  el.ghostBubble.style.left=p.x+'px'; el.ghostBubble.style.top=p.y+'px';
+  el.ghostBubble.style.transform=`scale(${state.zoom})`;
+  el.ghostBubble.style.transformOrigin='top left';
+}
+
+function render(){
+  if(state.editingNodeId) return;
+  el.nodesLayer.innerHTML=''; el.edgesLayer.innerHTML=''; el.zoomText.textContent=`Zoom: ${Math.round(state.zoom*100)}%`;
+  const vis = visibleNodeSet();
+  const lookup = new Map(state.nodes.map(n=>[n.id,n]));
+  state.edges.forEach(e=>{ const a=lookup.get(e.from),b=lookup.get(e.to); if(a&&b&&vis.has(a.id)&&vis.has(b.id)) drawEdge(a,b); });
+
+  for(const node of state.nodes){
+    if(!vis.has(node.id)) continue;
+    const d=document.createElement('div'); d.className='node'+(node.parentId==null?' main':'')+(state.selectedNodeId===node.id?' selected':''); d.dataset.nodeId=node.id;
+    const p=worldToScreen(node.x,node.y); d.style.left=p.x+'px'; d.style.top=p.y+'px'; d.style.transform=`scale(${state.zoom})`; d.style.transformOrigin='top left';
+
+    const title=document.createElement('div'); title.className='title'; title.textContent=node.text||''; title.contentEditable='false';
+    title.addEventListener('mousedown',e=>e.stopPropagation());
+    title.addEventListener('click',e=>e.stopPropagation());
+    title.addEventListener('blur',()=>{ if(state.editingNodeId===node.id){ stopEditing(title,node,true); render(); } });
+    title.addEventListener('keydown',e=>{
+      if(e.key==='Escape'){ e.preventDefault(); stopEditing(title,node,false); render(); return; }
+      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); title.blur(); return; }
+      if(e.key==='Tab'){
+        e.preventDefault();
+        stopEditing(title,node,true);
+        render();
+        addNode(node.id);
+        return;
+      }
+    });
+    d.appendChild(title);
+
+    d.addEventListener('click',()=>{ state.selectedNodeId=node.id; render(); });
+    d.addEventListener('dblclick',e=>{ e.preventDefault(); state.selectedNodeId=node.id; focusNodeForEditing(node); render(); startEditingNode(node.id); });
+
+    d.addEventListener('mousedown',e=>{
+      if(e.button!==0) return;
+      state.selectedNodeId=node.id;
+      state.drag={nodeId:node.id,startX:e.clientX,startY:e.clientY,moved:false};
+    });
+
+    if(node.parentId==null){
+      if(hasChildren(node.id,-1)){
+        const cl=document.createElement('div');
+        cl.className='collapse-caret left ' + (node.collapsedLeft?'collapsed persistent':'');
+        cl.textContent='▸';
+        cl.title=node.collapsedLeft?'Expand left branch':'Collapse left branch';
+        cl.addEventListener('mousedown',e=>e.stopPropagation());
+        cl.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedLeft=!node.collapsedLeft; saveLocal(); render(); });
+        d.appendChild(cl);
+      }
+      if(hasChildren(node.id,1)){
+        const cr=document.createElement('div');
+        cr.className='collapse-caret right ' + (node.collapsedRight?'collapsed persistent':'');
+        cr.textContent='▸';
+        cr.title=node.collapsedRight?'Expand right branch':'Collapse right branch';
+        cr.addEventListener('mousedown',e=>e.stopPropagation());
+        cr.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedRight=!node.collapsedRight; saveLocal(); render(); });
+        d.appendChild(cr);
+      }
+    } else if(hasChildren(node.id)){
+      const c=document.createElement('div');
+      const outwardRight = node.side >= 0;
+      c.className='collapse-caret ' + (outwardRight?'right':'left') + (node.collapsed?' collapsed persistent':'');
+      c.textContent='▸';
+      c.title = node.collapsed ? 'Expand branch' : 'Collapse branch';
+      c.addEventListener('mousedown',e=>e.stopPropagation());
+      c.addEventListener('click',e=>{ e.stopPropagation(); node.collapsed=!node.collapsed; saveLocal(); render(); });
+      d.appendChild(c);
+    }
+
+    el.nodesLayer.appendChild(d);
+  }
+  renderDropOverlay();
+  renderGhostBubble();
+}
+
+function detectDropHint(clientX, clientY, draggedId){
+  const draggedEl = el.nodesLayer.querySelector(`.node[data-node-id="${draggedId}"]`);
+  const overlayPrev = el.dropOverlay.style.display;
+  const ghostPrev = el.ghostBubble.style.display;
+  const dragPointerPrev = draggedEl ? draggedEl.style.pointerEvents : '';
+
+  el.dropOverlay.style.display='none'; el.ghostBubble.style.display='none';
+  if (draggedEl) draggedEl.style.pointerEvents = 'none';
+  const hit = document.elementFromPoint(clientX, clientY)?.closest?.('.node');
+  if (draggedEl) draggedEl.style.pointerEvents = dragPointerPrev;
+  el.dropOverlay.style.display = overlayPrev; el.ghostBubble.style.display = ghostPrev;
+
+  if(!hit) return null;
+  const targetId = hit.dataset.nodeId;
+  if(!targetId || targetId===draggedId) return null;
+
+  const dragNode=byId(draggedId), targetNode=byId(targetId);
+  if(!dragNode||!targetNode||isDescendant(targetNode.id,dragNode.id)) return null;
+
+  const rect=hit.getBoundingClientRect();
+  const lx=clientX-rect.left, ly=clientY-rect.top;
+  const centerScreenX=worldToScreen(mapCenterX(),0).x;
+  const targetOnRight=(rect.left+rect.width/2)>=centerScreenX;
+
+  const insideHalf=targetOnRight ? (lx<rect.width/2) : (lx>rect.width/2);
+  let mode='child';
+  if(insideHalf && targetNode.parentId!=null){
+    if (ly < rect.height * 0.25) mode='sibling-top';
+    else if (ly > rect.height * 0.75) mode='sibling-bottom';
+    else mode='child';
+  }
+
+  let ghostPos=null;
+  if(mode==='child'){
+    const side = targetNode.parentId==null ? (targetOnRight?1:-1) : targetNode.side;
+    const count = childrenOf(targetNode.id, side).filter(n=>n.id!==draggedId).length;
+    const rank = count % 2 === 0 ? count/2 : -((count+1)/2);
+    ghostPos = { x: targetNode.x + side*X_STEP, y: targetNode.y + rank*Y_STEP };
+  } else {
+    const parent = byId(targetNode.parentId);
+    const side = targetNode.side;
+    ghostPos = { x: parent.x + side*X_STEP, y: targetNode.y + (mode==='sibling-top' ? -Y_STEP : Y_STEP) };
+  }
+
+  return {targetId, mode, targetOnRight, ghostPos};
+}
+
+let panning=false, panStartX=0, panStartY=0;
+el.canvasWrap.addEventListener('mousedown',e=>{ if(state.editingNodeId) return; if(e.target!==el.canvasWrap&&e.target!==el.nodesLayer&&e.target!==el.edgesLayer) return; state.selectedNodeId=null; panning=true; panStartX=e.clientX-state.panX; panStartY=e.clientY-state.panY; render(); });
+window.addEventListener('mousemove',e=>{
+  if(state.drag){ const n=byId(state.drag.nodeId); if(!n) return; const dist=Math.hypot(e.clientX-state.drag.startX,e.clientY-state.drag.startY); if(dist>4) state.drag.moved=true;
+    if(state.drag.moved){ const rect=el.canvasWrap.getBoundingClientRect(); const sx=e.clientX-rect.left, sy=e.clientY-rect.top; n.x=(sx-state.panX)/state.zoom-NODE_W/2; n.y=(sy-state.panY)/state.zoom-NODE_H/2; state.dropHint=detectDropHint(e.clientX,e.clientY,n.id); render(); }
+    return; }
+  if(panning){ state.panX=e.clientX-panStartX; state.panY=e.clientY-panStartY; render(); }
+});
+window.addEventListener('mouseup',()=>{ if(state.drag){ const d=state.drag, dn=byId(d.nodeId); if(dn&&d.moved&&state.dropHint){ const t=byId(state.dropHint.targetId); if(t){ if(state.dropHint.mode==='child') reparentAsChild(dn,t); else if(state.dropHint.mode==='sibling-top') reparentAsSibling(dn,t,false); else reparentAsSibling(dn,t,true);} } state.drag=null; state.dropHint=null; resolveOverlaps(); syncEdgesFromParents(); ensureNodeVisibleNow(dn); saveLocal(); render(); } if(panning){ panning=false; saveLocal(); } });
+
+el.canvasWrap.addEventListener('wheel',e=>{ e.preventDefault(); const rect=el.canvasWrap.getBoundingClientRect(); const sx=e.clientX-rect.left, sy=e.clientY-rect.top; const before=screenToWorld(sx,sy); state.zoom=Math.min(2.5,Math.max(0.35,state.zoom*(e.deltaY<0?1.1:0.9))); state.panX += sx-(before.x*state.zoom+state.panX); state.panY += sy-(before.y*state.zoom+state.panY); render(); }, {passive:false});
+
+function closeFileMenu(){ if(el.fileMenu) el.fileMenu.open=false; }
+function openNewMapModal(){ closeFileMenu(); el.newMapModal.classList.add('show'); }
+function closeNewMapModal(){ el.newMapModal.classList.remove('show'); }
+function createFreshMap(){
+  state.nodes=[]; state.edges=[]; state.selectedNodeId=null; state.editingNodeId=null;
+  resetView();
+  addNode(null);
+  saveLocal();
+}
+
+el.newBtn.addEventListener('click', openNewMapModal);
+el.newCancelBtn.addEventListener('click', closeNewMapModal);
+el.newSaveBtn.addEventListener('click', ()=>{ el.exportBtn.click(); createFreshMap(); closeNewMapModal(); });
+el.newNowBtn.addEventListener('click', ()=>{ createFreshMap(); closeNewMapModal(); });
+el.newMapModal.addEventListener('click', (e)=>{ if(e.target===el.newMapModal) closeNewMapModal(); });
+window.addEventListener('click',(e)=>{ if(el.fileMenu?.open && !el.fileMenu.contains(e.target)) closeFileMenu(); });
+el.themeBtn.addEventListener('click',()=>{ cycleTheme(); render(); });
+el.expandAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ n.collapsed=false; if(n.parentId==null){ n.collapsedLeft=false; n.collapsedRight=false; } }); saveLocal(); render(); });
+el.collapseAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ if(hasChildren(n.id)){ if(n.parentId==null){ n.collapsedLeft=hasChildren(n.id,-1); n.collapsedRight=hasChildren(n.id,1); } else { n.collapsed=true; } } }); saveLocal(); render(); });
+el.printBtn.addEventListener('click',()=>{ closeFileMenu(); window.print(); });
+el.exportBtn.addEventListener('click',()=>{ closeFileMenu(); const payload=JSON.stringify({nodes:state.nodes,theme:state.theme},null,2); const blob=new Blob([payload],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='mindmap-map.json'; a.click(); URL.revokeObjectURL(url); });
+el.importBtn.addEventListener('click',()=>{ closeFileMenu(); el.importFile.click(); });
+el.importFile.addEventListener('change',async()=>{ const file=el.importFile.files[0]; if(!file) return; try{ const p=JSON.parse(await file.text()); state.nodes=Array.isArray(p.nodes)?p.nodes.map(n=>({...n,collapsed:!!n.collapsed,collapsedLeft:!!n.collapsedLeft,collapsedRight:!!n.collapsedRight})):[]; if(['light','dark','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; if(!state.nodes.length) addNode(); const root=mainNode()||state.nodes[0]; root.parentId=null; root.collapsedLeft=!!root.collapsedLeft; root.collapsedRight=!!root.collapsedRight; centerMainNode(); syncEdgesFromParents(); setTheme(state.theme); resetView(); saveLocal(); render(); } catch { alert('Invalid JSON file'); } el.importFile.value=''; });
+
+function deleteSelected(){
+  if(!state.selectedNodeId) return;
+  const dead=state.selectedNodeId;
+  const selectedEl = el.nodesLayer.querySelector(`.node[data-node-id="${dead}"]`);
+  if(selectedEl){ selectedEl.classList.add('shatter'); }
+  setTimeout(()=>{
+    const gone=new Set([dead]); let changed=true;
+    while(changed){ changed=false; for(const n of state.nodes){ if(n.parentId&&gone.has(n.parentId)&&!gone.has(n.id)){gone.add(n.id);changed=true;} } }
+    const d=byId(dead);
+    state.nodes=state.nodes.filter(n=>!gone.has(n.id));
+    if(d&&d.parentId){ rebalanceChildren(d.parentId,d.side); }
+    if(d&&d.parentId==null){ state.nodes=[]; addNode(); resetView(); }
+    syncEdgesFromParents(); state.selectedNodeId=mainNode()?.id||null; saveLocal(); render();
+  }, selectedEl ? 210 : 0);
+}
+
+window.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && el.newMapModal.classList.contains('show')){ e.preventDefault(); closeNewMapModal(); return; }
+  if(e.key==='Escape' && el.fileMenu?.open){ el.fileMenu.open=false; }
+  if(e.key==='?'){ e.preventDefault(); el.help.classList.toggle('show'); return; }
+  if(state.editingNodeId) return;
+  const mod=e.ctrlKey||e.metaKey;
+  if(e.key==='Tab'){ e.preventDefault(); addNode(state.selectedNodeId||mainNode()?.id); return; }
+  if(e.key==='Enter'){ e.preventDefault(); addSibling(); return; }
+  if(e.key==='Delete' || e.key==='Backspace'){ e.preventDefault(); deleteSelected(); return; }
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ e.preventDefault(); const n=byId(state.selectedNodeId); if(!n) return; if(e.key==='ArrowUp') n.y-=10; if(e.key==='ArrowDown') n.y+=10; if(e.key==='ArrowLeft') n.x-=10; if(e.key==='ArrowRight') n.x+=10; saveLocal(); render(); return; }
+  if(e.key==='+'||e.key==='='){ e.preventDefault(); state.zoom=Math.min(2.5,state.zoom*1.1); render(); return; }
+  if(e.key==='-'){ e.preventDefault(); state.zoom=Math.max(0.35,state.zoom*0.9); render(); return; }
+  if(e.key==='0'){ e.preventDefault(); resetView(); render(); return; }
+  if(mod&&e.key.toLowerCase()==='s'){ e.preventDefault(); saveLocal(); return; }
+  if(mod&&e.key.toLowerCase()==='n'){ e.preventDefault(); openNewMapModal(); return; }
+  if(mod&&e.key.toLowerCase()==='p'){ e.preventDefault(); el.printBtn.click(); return; }
+  if(mod&&e.key.toLowerCase()==='e'){ e.preventDefault(); el.exportBtn.click(); return; }
+  if(mod&&e.key.toLowerCase()==='o'){ e.preventDefault(); el.importBtn.click(); return; }
+  if(mod&&e.key.toLowerCase()==='d'){ e.preventDefault(); cycleTheme(); render(); return; }
+
+  if(!mod && e.key.length===1 && state.selectedNodeId){
+    const n=byId(state.selectedNodeId);
+    if(n){ e.preventDefault(); focusNodeForEditing(n); render(); startEditingNode(n.id, e.key, true); }
+  }
+});
+
+loadLocal(); setTheme(state.theme);
+if(!state.nodes.length){ resetView(); addNode(null); } else { centerMainNode(); syncEdgesFromParents(); resetView(); render(); }
+</script>
+</body>
+</html>
