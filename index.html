@@ -37,6 +37,8 @@
     button { border:none; background:transparent; color:var(--text); border-radius:0; padding:4px 8px; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.01em; }
     .danger { border-color:#9c4242; }
     .hint,.zoom { font-size:13px; color:var(--muted); }
+    .compact-wrap { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; margin-left:6px; }
+    .compact-wrap input[type="range"] { width:120px; }
     .file-menu { position:relative; }
     .file-menu summary { list-style:none; cursor:pointer; border:none; background:transparent; padding:4px 8px; font-size:13px; font-weight:600; }
     .file-menu[open] .file-pop { display:flex; }
@@ -67,6 +69,8 @@
       border-radius:6px; padding:2px 4px;
       text-align:center; pointer-events:none;
     }
+    .node.side-right .title { text-align:left; }
+    .node.side-left .title { text-align:right; }
     .title:empty::before { content:""; display:inline-block; width:1px; }
     .title.editing { background:#ffffff14; }
 
@@ -151,9 +155,13 @@
         </div>
       </details>
       <button id="themeBtn">Theme</button>
+      <button id="cleanupBtn">Clean up</button>
       <button id="expandAllBtn">Expand All</button>
       <button id="collapseAllBtn">Collapse All</button>
       <span class="zoom" id="zoomText">Zoom: 100%</span>
+      <label class="compact-wrap">Compactness
+        <input id="compactnessRange" type="range" min="0" max="100" step="1" value="50" />
+      </label>
       <span class="hint">Tab -> Child · Enter -> Sibling · Drag/drop to reorder</span>
       <input type="file" id="importFile" accept="application/json" style="display:none" />
     </div>
@@ -183,15 +191,15 @@
 const STORAGE_KEY = 'mindmap-mvp-v6';
 const NODE_W = 180, NODE_H = 56, X_STEP = 250, Y_STEP = 100;
 
-const state = { nodes: [], edges: [], selectedNodeId: null, editingNodeId: null, editBackupText: '', zoom: 1, panX: 0, panY: 0, drag: null, dropHint: null, theme: 'dark' };
+const state = { nodes: [], edges: [], selectedNodeId: null, editingNodeId: null, editBackupText: '', zoom: 1, panX: 0, panY: 0, drag: null, dropHint: null, theme: 'dark', compactness: 50 };
 const el = {
   canvasWrap: document.getElementById('canvasWrap'), nodesLayer: document.getElementById('nodesLayer'), edgesLayer: document.getElementById('edgesLayer'),
-  dropOverlay: document.getElementById('dropOverlay'), newBtn: document.getElementById('newBtn'), themeBtn: document.getElementById('themeBtn'),
+  dropOverlay: document.getElementById('dropOverlay'), newBtn: document.getElementById('newBtn'), themeBtn: document.getElementById('themeBtn'), cleanupBtn: document.getElementById('cleanupBtn'),
   expandAllBtn: document.getElementById('expandAllBtn'), collapseAllBtn: document.getElementById('collapseAllBtn'), printBtn: document.getElementById('printBtn'), exportBtn: document.getElementById('exportBtn'), importBtn: document.getElementById('importBtn'), importFile: document.getElementById('importFile'),
-  zoomText: document.getElementById('zoomText'), help: document.getElementById('help'), ghostBubble: document.getElementById('ghostBubble'), fileMenu: document.getElementById('fileMenu'),
+  zoomText: document.getElementById('zoomText'), compactnessRange: document.getElementById('compactnessRange'), help: document.getElementById('help'), ghostBubble: document.getElementById('ghostBubble'), fileMenu: document.getElementById('fileMenu'),
   newMapModal: document.getElementById('newMapModal'), newCancelBtn: document.getElementById('newCancelBtn'), newSaveBtn: document.getElementById('newSaveBtn'), newNowBtn: document.getElementById('newNowBtn')
 };
-el.help.textContent = `Tab: child • Enter: sibling\nDrag any bubble to reparent\nDouble-click to edit`;
+el.help.textContent = `Tab: child • Enter: sibling\nArrow keys: move selection bubble-to-bubble\nDrag any bubble to reparent\nDouble-click to edit`;
 
 const id = () => Math.random().toString(36).slice(2,10);
 const byId = nid => state.nodes.find(n => n.id === nid) || null;
@@ -199,9 +207,12 @@ const mainNode = () => state.nodes.find(n => n.parentId == null) || null;
 const mapCenterX = () => (mainNode()?.x ?? 0) + NODE_W / 2;
 const worldToScreen = (x,y) => ({ x: x * state.zoom + state.panX, y: y * state.zoom + state.panY });
 const screenToWorld = (x,y) => ({ x: (x - state.panX) / state.zoom, y: (y - state.panY) / state.zoom });
+const compactFactor = () => 1.4 - (state.compactness/100)*0.7; // 0=>loose, 100=>tight
+const xStep = () => Math.round(X_STEP * compactFactor());
+const yStep = () => Math.round(Y_STEP * compactFactor());
 
-function saveLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify({nodes:state.nodes, theme:state.theme})); }
-function loadLocal(){ try { const p = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); state.nodes = Array.isArray(p.nodes) ? p.nodes.map(n=>({...n, collapsed:!!n.collapsed, collapsedLeft:!!n.collapsedLeft, collapsedRight:!!n.collapsedRight})) : []; if (['dark','light','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; } catch {} }
+function saveLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify({nodes:state.nodes, theme:state.theme, compactness:state.compactness})); }
+function loadLocal(){ try { const p = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); state.nodes = Array.isArray(p.nodes) ? p.nodes.map(n=>({...n, collapsed:!!n.collapsed, collapsedLeft:!!n.collapsedLeft, collapsedRight:!!n.collapsedRight})) : []; if (['dark','light','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; if(Number.isFinite(p.compactness)) state.compactness=Math.max(0,Math.min(100,p.compactness)); } catch {} }
 function setTheme(t){ state.theme = ['dark','light','glass','pastel-light','pastel-dark'].includes(t) ? t : 'dark'; document.documentElement.setAttribute('data-theme', state.theme); saveLocal(); }
 function cycleTheme(){ const order=['dark','light','glass','pastel-light','pastel-dark']; const i=order.indexOf(state.theme); setTheme(order[(i+1)%order.length]); }
 function centerMainNode(){ const m = mainNode(); if(m){ m.x = -NODE_W/2; m.y = -NODE_H/2; } }
@@ -249,6 +260,86 @@ function resolveOverlaps(iterations=40){
     if(!moved) break;
   }
 }
+
+function removeEmptyLeafNodes(){
+  let changed=true;
+  while(changed){
+    changed=false;
+    const leafIds = new Set(state.nodes.filter(n => n.parentId!=null && !state.nodes.some(c => c.parentId===n.id) && !(n.text||'').trim()).map(n => n.id));
+    if(leafIds.size){
+      state.nodes = state.nodes.filter(n => !leafIds.has(n.id));
+      changed=true;
+    }
+  }
+}
+
+function enforceNonCrossingLayout(){
+  const root = mainNode();
+  if(!root) return;
+
+  const vis = visibleNodeSet();
+
+  function sortKids(pid, side){
+    return childrenOf(pid, side)
+      .filter(k => vis.has(k.id))
+      .sort((a,b)=>a.y-b.y || (a.text||'').localeCompare(b.text||''));
+  }
+
+  function depthMax(nodeId, side, d=1){
+    const kids = sortKids(nodeId, side);
+    if(!kids.length) return d;
+    return Math.max(...kids.map(k => depthMax(k.id, side, d+1)));
+  }
+
+  function countLeaves(nodeId, side){
+    const kids = sortKids(nodeId, side);
+    if(!kids.length) return 1;
+    return kids.reduce((sum,k)=>sum + countLeaves(k.id, side), 0);
+  }
+
+  const halfW = Math.max(320, el.canvasWrap.clientWidth/2 - 70);
+  const leftDepth = depthMax(root.id, -1, 0);
+  const rightDepth = depthMax(root.id, 1, 0);
+  const stepFor = (depth) => Math.min(xStep(), Math.max(150, halfW / Math.max(1, depth)));
+  const leftStep = stepFor(leftDepth);
+  const rightStep = stepFor(rightDepth);
+
+  function layoutSide(side, step){
+    const top = sortKids(root.id, side);
+    if(!top.length) return;
+    const leaves = top.reduce((s,n)=>s+countLeaves(n.id, side),0);
+    let cursor = root.y - ((leaves-1)*yStep())/2;
+
+    function place(node, depth){
+      const kids = sortKids(node.id, side);
+      node.side = side;
+      node.x = root.x + side*step*depth;
+      if(!kids.length){
+        node.y = cursor;
+        cursor += yStep();
+      } else {
+        for(const c of kids) place(c, depth+1);
+        node.y = (kids[0].y + kids[kids.length-1].y)/2;
+      }
+    }
+
+    for(const n of top) place(n,1);
+  }
+
+  layoutSide(-1, leftStep);
+  layoutSide(1, rightStep);
+  resolveOverlaps(4);
+  syncEdgesFromParents();
+}
+
+function cleanupMap(){
+  removeEmptyLeafNodes();
+  enforceNonCrossingLayout();
+  const sel = byId(state.selectedNodeId);
+  if(!sel) state.selectedNodeId = mainNode()?.id || null;
+  saveLocal();
+  render();
+}
 function ensureNodeVisibleNow(node){
   if(!node) return;
   const vw=el.canvasWrap.clientWidth, vh=el.canvasWrap.clientHeight, m=28;
@@ -271,6 +362,37 @@ function ensureNodeVisibleNow(node){
   if(right>vw-m) state.panX -= (right-(vw-m));
   if(top<m) state.panY += (m-top);
   if(bottom>vh-m) state.panY -= (bottom-(vh-m));
+}
+
+function selectNearestInDirection(dir){
+  const current = byId(state.selectedNodeId) || mainNode();
+  if(!current) return;
+  const cx = current.x + NODE_W/2, cy = current.y + NODE_H/2;
+  let best = null;
+  let bestScore = Infinity;
+
+  for(const n of state.nodes){
+    if(n.id===current.id) continue;
+    const nx = n.x + NODE_W/2, ny = n.y + NODE_H/2;
+    const dx = nx - cx, dy = ny - cy;
+    let valid = false;
+    if(dir==='left') valid = dx < -2;
+    if(dir==='right') valid = dx > 2;
+    if(dir==='up') valid = dy < -2;
+    if(dir==='down') valid = dy > 2;
+    if(!valid) continue;
+
+    const primary = (dir==='left' || dir==='right') ? Math.abs(dx) : Math.abs(dy);
+    const secondary = (dir==='left' || dir==='right') ? Math.abs(dy) : Math.abs(dx);
+    const score = primary + secondary * 0.55;
+    if(score < bestScore){ bestScore = score; best = n; }
+  }
+
+  if(best){
+    state.selectedNodeId = best.id;
+    ensureNodeVisibleNow(best);
+    render();
+  }
 }
 
 const childrenOf = (pid, side=null) => state.nodes.filter(n => n.parentId===pid && (side==null || n.side===side));
@@ -299,7 +421,7 @@ function visibleNodeSet(){
   return vis;
 }
 function syncEdgesFromParents(){ state.edges = state.nodes.filter(n => n.parentId).map(n => ({id:id(), from:n.parentId, to:n.id})); }
-function rebalanceChildren(pid, side){ const p = byId(pid); if(!p) return; const sibs = childrenOf(pid,side).sort((a,b)=>a.y-b.y); const start = p.y - ((sibs.length - 1) * Y_STEP) / 2; sibs.forEach((n,i)=>{ n.x = p.x + side * X_STEP; n.y = start + i * Y_STEP; }); }
+function rebalanceChildren(pid, side){ const p = byId(pid); if(!p) return; const sibs = childrenOf(pid,side).sort((a,b)=>a.y-b.y); const start = p.y - ((sibs.length - 1) * yStep()) / 2; sibs.forEach((n,i)=>{ n.x = p.x + side * xStep(); n.y = start + i * yStep(); }); }
 function isDescendant(candidate, ancestor){ let cur = byId(candidate); while(cur && cur.parentId){ if(cur.parentId === ancestor) return true; cur = byId(cur.parentId);} return false; }
 function subtreeIds(rootId){
   const out=new Set([rootId]);
@@ -319,11 +441,11 @@ function translateSubtree(rootId, dx, dy, includeRoot=true){
 function normalizeSubtreeLayout(rootId){
   const root = byId(rootId); if(!root) return;
   const kids = state.nodes.filter(n=>n.parentId===rootId).sort((a,b)=>a.y-b.y);
-  const start = root.y - ((kids.length-1)*Y_STEP)/2;
+  const start = root.y - ((kids.length-1)*yStep())/2;
   kids.forEach((c,i)=>{
     c.side = root.side;
-    c.x = root.x + root.side*X_STEP;
-    c.y = start + i*Y_STEP;
+    c.x = root.x + root.side*xStep();
+    c.y = start + i*yStep();
     normalizeSubtreeLayout(c.id);
   });
 }
@@ -333,19 +455,19 @@ function addNode(parentId=null){
   const p = byId(parentId); if(!p) return null;
   const side = p.parentId == null ? firstLevelSideForNext() : p.side;
   const sibs = childrenOf(p.id, side); const rank = sibs.length % 2 === 0 ? sibs.length/2 : -((sibs.length+1)/2);
-  const n = {id:id(), x:p.x + side*X_STEP, y:p.y + rank*Y_STEP, text:'', parentId:p.id, side, collapsed:false};
-  state.nodes.push(n); rebalanceChildren(p.id, side); resolveOverlaps(); syncEdgesFromParents(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id); return n;
+  const n = {id:id(), x:p.x + side*xStep(), y:p.y + rank*yStep(), text:'', parentId:p.id, side, collapsed:false};
+  state.nodes.push(n); rebalanceChildren(p.id, side); enforceNonCrossingLayout(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id); return n;
 }
 function addSibling(){
   const cur=byId(state.selectedNodeId); if(!cur || !cur.parentId) return;
   const parent=byId(cur.parentId); if(!parent) return;
-  const n={id:id(), x:cur.x, y:cur.y+Y_STEP, text:'', parentId:parent.id, side:cur.side, collapsed:false};
+  const n={id:id(), x:cur.x, y:cur.y+yStep(), text:'', parentId:parent.id, side:cur.side, collapsed:false};
   const sibs=childrenOf(parent.id, cur.side).sort((a,b)=>a.y-b.y);
   const idx=Math.max(0,sibs.findIndex(s=>s.id===cur.id));
   sibs.splice(idx+1,0,n);
-  const start=parent.y-((sibs.length-1)*Y_STEP)/2;
-  sibs.forEach((s,i)=>{ s.x=parent.x+cur.side*X_STEP; s.y=start+i*Y_STEP; });
-  state.nodes.push(n); resolveOverlaps(); syncEdgesFromParents(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id);
+  const start=parent.y-((sibs.length-1)*yStep())/2;
+  sibs.forEach((s,i)=>{ s.x=parent.x+cur.side*xStep(); s.y=start+i*yStep(); });
+  state.nodes.push(n); enforceNonCrossingLayout(); state.selectedNodeId=n.id; ensureNodeVisibleNow(n); saveLocal(); render(); focusNodeForEditing(n); render(); startEditingNode(n.id);
 }
 
 function reparentAsChild(d,t){
@@ -374,8 +496,8 @@ function reparentAsSibling(d,t,below){
   const sibs=childrenOf(p.id,t.side).filter(n=>n.id!==d.id).sort((a,b)=>a.y-b.y);
   const ti=Math.max(0,sibs.findIndex(n=>n.id===t.id));
   sibs.splice(below?ti+1:ti,0,d);
-  const start=p.y-((sibs.length-1)*Y_STEP)/2;
-  sibs.forEach((n,i)=>{n.x=p.x+t.side*X_STEP;n.y=start+i*Y_STEP;});
+  const start=p.y-((sibs.length-1)*yStep())/2;
+  sibs.forEach((n,i)=>{n.x=p.x+t.side*xStep();n.y=start+i*yStep();});
 
   const dx=d.x-oldX, dy=d.y-oldY;
   translateSubtree(d.id, dx, dy, false); // move descendants with A
@@ -458,7 +580,8 @@ function render(){
 
   for(const node of state.nodes){
     if(!vis.has(node.id)) continue;
-    const d=document.createElement('div'); d.className='node'+(node.parentId==null?' main':'')+(state.selectedNodeId===node.id?' selected':''); d.dataset.nodeId=node.id;
+    const sideClass = node.parentId==null ? '' : (node.side>=0 ? ' side-right' : ' side-left');
+    const d=document.createElement('div'); d.className='node'+(node.parentId==null?' main':'')+sideClass+(state.selectedNodeId===node.id?' selected':''); d.dataset.nodeId=node.id;
     const p=worldToScreen(node.x,node.y); d.style.left=p.x+'px'; d.style.top=p.y+'px'; d.style.transform=`scale(${state.zoom})`; d.style.transformOrigin='top left';
 
     const title=document.createElement('div'); title.className='title'; title.textContent=node.text||''; title.contentEditable='false';
@@ -484,7 +607,13 @@ function render(){
     d.addEventListener('mousedown',e=>{
       if(e.button!==0) return;
       state.selectedNodeId=node.id;
-      state.drag={nodeId:node.id,startX:e.clientX,startY:e.clientY,moved:false};
+      state.drag={
+        nodeId:node.id,
+        startX:e.clientX,
+        startY:e.clientY,
+        moved:false,
+        subtree:[...subtreeIds(node.id)]
+      };
     });
 
     if(node.parentId==null){
@@ -494,7 +623,7 @@ function render(){
         cl.textContent='▸';
         cl.title=node.collapsedLeft?'Expand left branch':'Collapse left branch';
         cl.addEventListener('mousedown',e=>e.stopPropagation());
-        cl.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedLeft=!node.collapsedLeft; saveLocal(); render(); });
+        cl.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedLeft=!node.collapsedLeft; enforceNonCrossingLayout(); saveLocal(); render(); });
         d.appendChild(cl);
       }
       if(hasChildren(node.id,1)){
@@ -503,7 +632,7 @@ function render(){
         cr.textContent='▸';
         cr.title=node.collapsedRight?'Expand right branch':'Collapse right branch';
         cr.addEventListener('mousedown',e=>e.stopPropagation());
-        cr.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedRight=!node.collapsedRight; saveLocal(); render(); });
+        cr.addEventListener('click',e=>{ e.stopPropagation(); node.collapsedRight=!node.collapsedRight; enforceNonCrossingLayout(); saveLocal(); render(); });
         d.appendChild(cr);
       }
     } else if(hasChildren(node.id)){
@@ -513,7 +642,7 @@ function render(){
       c.textContent='▸';
       c.title = node.collapsed ? 'Expand branch' : 'Collapse branch';
       c.addEventListener('mousedown',e=>e.stopPropagation());
-      c.addEventListener('click',e=>{ e.stopPropagation(); node.collapsed=!node.collapsed; saveLocal(); render(); });
+      c.addEventListener('click',e=>{ e.stopPropagation(); node.collapsed=!node.collapsed; enforceNonCrossingLayout(); saveLocal(); render(); });
       d.appendChild(c);
     }
 
@@ -560,11 +689,11 @@ function detectDropHint(clientX, clientY, draggedId){
     const side = targetNode.parentId==null ? (targetOnRight?1:-1) : targetNode.side;
     const count = childrenOf(targetNode.id, side).filter(n=>n.id!==draggedId).length;
     const rank = count % 2 === 0 ? count/2 : -((count+1)/2);
-    ghostPos = { x: targetNode.x + side*X_STEP, y: targetNode.y + rank*Y_STEP };
+    ghostPos = { x: targetNode.x + side*xStep(), y: targetNode.y + rank*yStep() };
   } else {
     const parent = byId(targetNode.parentId);
     const side = targetNode.side;
-    ghostPos = { x: parent.x + side*X_STEP, y: targetNode.y + (mode==='sibling-top' ? -Y_STEP : Y_STEP) };
+    ghostPos = { x: parent.x + side*xStep(), y: targetNode.y + (mode==='sibling-top' ? -yStep() : yStep()) };
   }
 
   return {targetId, mode, targetOnRight, ghostPos};
@@ -573,12 +702,49 @@ function detectDropHint(clientX, clientY, draggedId){
 let panning=false, panStartX=0, panStartY=0;
 el.canvasWrap.addEventListener('mousedown',e=>{ if(state.editingNodeId) return; if(e.target!==el.canvasWrap&&e.target!==el.nodesLayer&&e.target!==el.edgesLayer) return; state.selectedNodeId=null; panning=true; panStartX=e.clientX-state.panX; panStartY=e.clientY-state.panY; render(); });
 window.addEventListener('mousemove',e=>{
-  if(state.drag){ const n=byId(state.drag.nodeId); if(!n) return; const dist=Math.hypot(e.clientX-state.drag.startX,e.clientY-state.drag.startY); if(dist>4) state.drag.moved=true;
-    if(state.drag.moved){ const rect=el.canvasWrap.getBoundingClientRect(); const sx=e.clientX-rect.left, sy=e.clientY-rect.top; n.x=(sx-state.panX)/state.zoom-NODE_W/2; n.y=(sy-state.panY)/state.zoom-NODE_H/2; state.dropHint=detectDropHint(e.clientX,e.clientY,n.id); render(); }
-    return; }
+  if(state.drag){
+    const n=byId(state.drag.nodeId); if(!n) return;
+    const dist=Math.hypot(e.clientX-state.drag.startX,e.clientY-state.drag.startY);
+    if(dist>4) state.drag.moved=true;
+    if(state.drag.moved){
+      const rect=el.canvasWrap.getBoundingClientRect();
+      const sx=e.clientX-rect.left, sy=e.clientY-rect.top;
+      const nx=(sx-state.panX)/state.zoom-NODE_W/2;
+      const ny=(sy-state.panY)/state.zoom-NODE_H/2;
+      const dx=nx-n.x, dy=ny-n.y;
+      for(const id of state.drag.subtree){
+        const node=byId(id);
+        if(node){ node.x += dx; node.y += dy; }
+      }
+      state.dropHint=detectDropHint(e.clientX,e.clientY,n.id);
+      render();
+    }
+    return;
+  }
   if(panning){ state.panX=e.clientX-panStartX; state.panY=e.clientY-panStartY; render(); }
 });
-window.addEventListener('mouseup',()=>{ if(state.drag){ const d=state.drag, dn=byId(d.nodeId); if(dn&&d.moved&&state.dropHint){ const t=byId(state.dropHint.targetId); if(t){ if(state.dropHint.mode==='child') reparentAsChild(dn,t); else if(state.dropHint.mode==='sibling-top') reparentAsSibling(dn,t,false); else reparentAsSibling(dn,t,true);} } state.drag=null; state.dropHint=null; resolveOverlaps(); syncEdgesFromParents(); ensureNodeVisibleNow(dn); saveLocal(); render(); } if(panning){ panning=false; saveLocal(); } });
+window.addEventListener('mouseup',()=>{
+  if(state.drag){
+    const d=state.drag, dn=byId(d.nodeId);
+    let reparented=false;
+    if(dn&&d.moved&&state.dropHint){
+      const t=byId(state.dropHint.targetId);
+      if(t){
+        if(state.dropHint.mode==='child') reparentAsChild(dn,t);
+        else if(state.dropHint.mode==='sibling-top') reparentAsSibling(dn,t,false);
+        else reparentAsSibling(dn,t,true);
+        reparented=true;
+      }
+    }
+    state.drag=null; state.dropHint=null;
+    if(reparented) enforceNonCrossingLayout();
+    else resolveOverlaps(8);
+    ensureNodeVisibleNow(dn);
+    saveLocal();
+    render();
+  }
+  if(panning){ panning=false; saveLocal(); }
+});
 
 el.canvasWrap.addEventListener('wheel',e=>{ e.preventDefault(); const rect=el.canvasWrap.getBoundingClientRect(); const sx=e.clientX-rect.left, sy=e.clientY-rect.top; const before=screenToWorld(sx,sy); state.zoom=Math.min(2.5,Math.max(0.35,state.zoom*(e.deltaY<0?1.1:0.9))); state.panX += sx-(before.x*state.zoom+state.panX); state.panY += sy-(before.y*state.zoom+state.panY); render(); }, {passive:false});
 
@@ -599,12 +765,20 @@ el.newNowBtn.addEventListener('click', ()=>{ createFreshMap(); closeNewMapModal(
 el.newMapModal.addEventListener('click', (e)=>{ if(e.target===el.newMapModal) closeNewMapModal(); });
 window.addEventListener('click',(e)=>{ if(el.fileMenu?.open && !el.fileMenu.contains(e.target)) closeFileMenu(); });
 el.themeBtn.addEventListener('click',()=>{ cycleTheme(); render(); });
-el.expandAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ n.collapsed=false; if(n.parentId==null){ n.collapsedLeft=false; n.collapsedRight=false; } }); saveLocal(); render(); });
-el.collapseAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ if(hasChildren(n.id)){ if(n.parentId==null){ n.collapsedLeft=hasChildren(n.id,-1); n.collapsedRight=hasChildren(n.id,1); } else { n.collapsed=true; } } }); saveLocal(); render(); });
+el.compactnessRange.value = String(state.compactness);
+el.compactnessRange.addEventListener('input',()=>{
+  state.compactness = Number(el.compactnessRange.value);
+  enforceNonCrossingLayout();
+  saveLocal();
+  render();
+});
+el.cleanupBtn.addEventListener('click',()=>{ cleanupMap(); });
+el.expandAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ n.collapsed=false; if(n.parentId==null){ n.collapsedLeft=false; n.collapsedRight=false; } }); enforceNonCrossingLayout(); saveLocal(); render(); });
+el.collapseAllBtn.addEventListener('click',()=>{ state.nodes.forEach(n=>{ if(hasChildren(n.id)){ if(n.parentId==null){ n.collapsedLeft=hasChildren(n.id,-1); n.collapsedRight=hasChildren(n.id,1); } else { n.collapsed=true; } } }); enforceNonCrossingLayout(); saveLocal(); render(); });
 el.printBtn.addEventListener('click',()=>{ closeFileMenu(); window.print(); });
-el.exportBtn.addEventListener('click',()=>{ closeFileMenu(); const payload=JSON.stringify({nodes:state.nodes,theme:state.theme},null,2); const blob=new Blob([payload],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='mindmap-map.json'; a.click(); URL.revokeObjectURL(url); });
+el.exportBtn.addEventListener('click',()=>{ closeFileMenu(); const payload=JSON.stringify({nodes:state.nodes,theme:state.theme,compactness:state.compactness},null,2); const blob=new Blob([payload],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='mindmap-map.json'; a.click(); URL.revokeObjectURL(url); });
 el.importBtn.addEventListener('click',()=>{ closeFileMenu(); el.importFile.click(); });
-el.importFile.addEventListener('change',async()=>{ const file=el.importFile.files[0]; if(!file) return; try{ const p=JSON.parse(await file.text()); state.nodes=Array.isArray(p.nodes)?p.nodes.map(n=>({...n,collapsed:!!n.collapsed,collapsedLeft:!!n.collapsedLeft,collapsedRight:!!n.collapsedRight})):[]; if(['light','dark','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; if(!state.nodes.length) addNode(); const root=mainNode()||state.nodes[0]; root.parentId=null; root.collapsedLeft=!!root.collapsedLeft; root.collapsedRight=!!root.collapsedRight; centerMainNode(); syncEdgesFromParents(); setTheme(state.theme); resetView(); saveLocal(); render(); } catch { alert('Invalid JSON file'); } el.importFile.value=''; });
+el.importFile.addEventListener('change',async()=>{ const file=el.importFile.files[0]; if(!file) return; try{ const p=JSON.parse(await file.text()); state.nodes=Array.isArray(p.nodes)?p.nodes.map(n=>({...n,collapsed:!!n.collapsed,collapsedLeft:!!n.collapsedLeft,collapsedRight:!!n.collapsedRight})):[]; if(['light','dark','glass','pastel-light','pastel-dark'].includes(p.theme)) state.theme=p.theme; if(Number.isFinite(p.compactness)) state.compactness=Math.max(0,Math.min(100,p.compactness)); el.compactnessRange.value=String(state.compactness); if(!state.nodes.length) addNode(); const root=mainNode()||state.nodes[0]; root.parentId=null; root.collapsedLeft=!!root.collapsedLeft; root.collapsedRight=!!root.collapsedRight; centerMainNode(); enforceNonCrossingLayout(); setTheme(state.theme); resetView(); saveLocal(); render(); } catch { alert('Invalid JSON file'); } el.importFile.value=''; });
 
 function deleteSelected(){
   if(!state.selectedNodeId) return;
@@ -631,7 +805,14 @@ window.addEventListener('keydown',e=>{
   if(e.key==='Tab'){ e.preventDefault(); addNode(state.selectedNodeId||mainNode()?.id); return; }
   if(e.key==='Enter'){ e.preventDefault(); addSibling(); return; }
   if(e.key==='Delete' || e.key==='Backspace'){ e.preventDefault(); deleteSelected(); return; }
-  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ e.preventDefault(); const n=byId(state.selectedNodeId); if(!n) return; if(e.key==='ArrowUp') n.y-=10; if(e.key==='ArrowDown') n.y+=10; if(e.key==='ArrowLeft') n.x-=10; if(e.key==='ArrowRight') n.x+=10; saveLocal(); render(); return; }
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+    e.preventDefault();
+    if(e.key==='ArrowUp') selectNearestInDirection('up');
+    if(e.key==='ArrowDown') selectNearestInDirection('down');
+    if(e.key==='ArrowLeft') selectNearestInDirection('left');
+    if(e.key==='ArrowRight') selectNearestInDirection('right');
+    return;
+  }
   if(e.key==='+'||e.key==='='){ e.preventDefault(); state.zoom=Math.min(2.5,state.zoom*1.1); render(); return; }
   if(e.key==='-'){ e.preventDefault(); state.zoom=Math.max(0.35,state.zoom*0.9); render(); return; }
   if(e.key==='0'){ e.preventDefault(); resetView(); render(); return; }
@@ -648,8 +829,8 @@ window.addEventListener('keydown',e=>{
   }
 });
 
-loadLocal(); setTheme(state.theme);
-if(!state.nodes.length){ resetView(); addNode(null); } else { centerMainNode(); syncEdgesFromParents(); resetView(); render(); }
+loadLocal(); setTheme(state.theme); el.compactnessRange.value=String(state.compactness);
+if(!state.nodes.length){ resetView(); addNode(null); } else { centerMainNode(); enforceNonCrossingLayout(); resetView(); render(); }
 </script>
 </body>
 </html>
