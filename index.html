@@ -192,7 +192,7 @@ const STORAGE_KEY = 'mindmap-mvp-v6';
 const NODE_W = 180, NODE_H = 56, X_STEP = 250, Y_STEP = 100;
 const MIN_W = 120, MAX_W = 320;
 
-const state = { nodes: [], edges: [], selectedNodeId: null, editingNodeId: null, editBackupText: '', editSnapshot: null, zoom: 1, panX: 0, panY: 0, drag: null, dropHint: null, theme: 'dark', compactness: 50 };
+const state = { nodes: [], edges: [], selectedNodeId: null, editingNodeId: null, editBackupText: '', editSnapshot: null, zoom: 1, panX: 0, panY: 0, drag: null, dropHint: null, theme: 'dark', compactness: 50, clickPending: null };
 const history = { undo: [], redo: [], max: 100, suspend: false };
 const el = {
   canvasWrap: document.getElementById('canvasWrap'), nodesLayer: document.getElementById('nodesLayer'), edgesLayer: document.getElementById('edgesLayer'),
@@ -251,13 +251,13 @@ function computeNodeWidth(text=''){
   const longestWordPx = Math.max(...t.split(/\s+/).filter(Boolean).map(w => textMeasureCtx.measureText(w).width), 0);
 
   let best = { width: Math.max(MIN_W, Math.min(MAX_W, Math.ceil(singleLinePx + 28))), score: Infinity };
-  for(let width = 150; width <= 300; width += 10){
+  for(let width = 140; width <= 260; width += 8){
     const contentMax = width - 28;
     const lines = measureWrappedLineCount(t, contentMax);
-    const tooNarrowPenalty = Math.max(0, (longestWordPx + 10) - contentMax) * 1.8;
-    const longPenalty = Math.max(0, width - 260) * 0.22;
+    const tooNarrowPenalty = Math.max(0, (longestWordPx + 10) - contentMax) * 2.1;
+    const longPenalty = Math.max(0, width - 230) * 0.34;
     const linePenalty = lines * 16;
-    const balancePenalty = Math.abs(width - 220) * 0.14;
+    const balancePenalty = Math.abs(width - 190) * 0.16;
     const score = linePenalty + longPenalty + tooNarrowPenalty + balancePenalty;
     if(score < best.score) best = { width, score };
   }
@@ -716,15 +716,29 @@ function render(){
     d.appendChild(title);
 
     d.addEventListener('click',e=>{
+      const now = Date.now();
+      const pending = state.clickPending;
+      const isDouble = pending && pending.nodeId===node.id && (now - pending.ts) < 320;
+
       state.selectedNodeId=node.id;
-      // Fallback for environments where dblclick can be flaky during drag/select handling.
-      if(e.detail >= 2){
+
+      if(isDouble){
+        clearTimeout(pending.timer);
+        state.clickPending = null;
         focusNodeForEditing(node);
         render();
         startEditingNode(node.id);
         return;
       }
-      render();
+
+      if(pending?.timer) clearTimeout(pending.timer);
+      const timer = setTimeout(()=>{
+        if(state.clickPending?.nodeId===node.id){
+          state.clickPending = null;
+          render();
+        }
+      }, 230);
+      state.clickPending = { nodeId: node.id, ts: now, timer };
     });
     d.addEventListener('dblclick',e=>{ e.preventDefault(); state.selectedNodeId=node.id; focusNodeForEditing(node); render(); startEditingNode(node.id); });
 
