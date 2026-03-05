@@ -64,7 +64,8 @@
     .node.selected { border-color:var(--accent); }
 
     .title {
-      width:100%; min-height:20px; white-space:pre-wrap; word-break:break-word;
+      width:100%; min-height:20px; white-space:pre-wrap;
+      word-break:normal; overflow-wrap:break-word; hyphens:none;
       font-size:14px; line-height:1.35; outline:none; cursor:text; user-select:text;
       border-radius:6px; padding:2px 4px;
       text-align:center; pointer-events:none;
@@ -218,10 +219,50 @@ const yStep = () => Math.round(Y_STEP * compactFactor());
 const textMeasureCanvas = document.createElement('canvas');
 const textMeasureCtx = textMeasureCanvas.getContext('2d');
 textMeasureCtx.font = '14px Inter, system-ui, sans-serif';
+function measureWrappedLineCount(text, maxLinePx){
+  const lines = (text || '').split('\n');
+  let count = 0;
+  for(const rawLine of lines){
+    const line = rawLine.trim();
+    if(!line){ count += 1; continue; }
+    const words = line.split(/\s+/).filter(Boolean);
+    let cur = 0;
+    for(const word of words){
+      const w = textMeasureCtx.measureText(word).width;
+      if(cur === 0){
+        cur = w;
+      } else if(cur + 6 + w <= maxLinePx){
+        cur += 6 + w;
+      } else {
+        count += 1;
+        cur = w;
+      }
+    }
+    count += 1;
+  }
+  return Math.max(1, count);
+}
+
 function computeNodeWidth(text=''){
-  const t = (text || '').replace(/\n/g,' ');
-  const w = Math.ceil(textMeasureCtx.measureText(t).width + 28);
-  return Math.max(MIN_W, Math.min(MAX_W, w));
+  const t = (text || '').trim();
+  if(!t) return MIN_W;
+
+  const singleLinePx = textMeasureCtx.measureText(t.replace(/\n/g,' ')).width;
+  const longestWordPx = Math.max(...t.split(/\s+/).filter(Boolean).map(w => textMeasureCtx.measureText(w).width), 0);
+
+  let best = { width: Math.max(MIN_W, Math.min(MAX_W, Math.ceil(singleLinePx + 28))), score: Infinity };
+  for(let width = 150; width <= 300; width += 10){
+    const contentMax = width - 28;
+    const lines = measureWrappedLineCount(t, contentMax);
+    const tooNarrowPenalty = Math.max(0, (longestWordPx + 10) - contentMax) * 1.8;
+    const longPenalty = Math.max(0, width - 260) * 0.22;
+    const linePenalty = lines * 16;
+    const balancePenalty = Math.abs(width - 220) * 0.14;
+    const score = linePenalty + longPenalty + tooNarrowPenalty + balancePenalty;
+    if(score < best.score) best = { width, score };
+  }
+
+  return Math.max(MIN_W, Math.min(MAX_W, Math.max(best.width, Math.ceil(longestWordPx + 34))));
 }
 
 function saveLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify({nodes:state.nodes, theme:state.theme, compactness:state.compactness})); }
@@ -674,7 +715,17 @@ function render(){
     });
     d.appendChild(title);
 
-    d.addEventListener('click',()=>{ state.selectedNodeId=node.id; render(); });
+    d.addEventListener('click',e=>{
+      state.selectedNodeId=node.id;
+      // Fallback for environments where dblclick can be flaky during drag/select handling.
+      if(e.detail >= 2){
+        focusNodeForEditing(node);
+        render();
+        startEditingNode(node.id);
+        return;
+      }
+      render();
+    });
     d.addEventListener('dblclick',e=>{ e.preventDefault(); state.selectedNodeId=node.id; focusNodeForEditing(node); render(); startEditingNode(node.id); });
 
     d.addEventListener('mousedown',e=>{
